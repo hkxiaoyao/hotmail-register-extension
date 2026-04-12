@@ -10,7 +10,10 @@
 
 ## 测试结果
 
-![CleanShot 2026-04-13 at 04.49.33@2x](/Users/zhenghan/Downloads/古法注册/hotmail-register-extension/attachments/README/CleanShot 2026-04-13 at 04.49.33@2x.png)![CleanShot 2026-04-13 at 04.52.37@2x](/Users/zhenghan/Downloads/古法注册/hotmail-register-extension/attachments/README/CleanShot 2026-04-13 at 04.52.37@2x.png)
+插件             |  CPA
+:-------------------------:|:-------------------------:
+![](https://github.com/user-attachments/assets/766ea771-77d0-40b9-8c42-5a1bcdfca413)  |  ![](https://github.com/user-attachments/assets/6f0f88e3-0297-4e08-9f87-6e7e3f888418)
+
 
 ## 快速开始
 
