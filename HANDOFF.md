@@ -1,5 +1,105 @@
 # HANDOFF
 
+## 2026-04-13 Step 2 跨 host 恢复失效与 Step 9 runtime 注入修复（以下内容补充最新状态）
+
+- 补充时间：2026-04-13
+- 触发背景：
+  - 用户真实联调中，手动调试 `步骤 2` 仍会报：
+    - `等待页面内步骤 2 完成超时，已超过 20 秒`
+  - 扩展错误页同时出现：
+    - `Uncaught SyntaxError: Unexpected token 'export'`
+    - 来源：`shared/step9-status.js:19`
+
+### 本次确认的根因
+
+- `content/signup-page.js`
+  - `Step 2 / Step 3` 的跨页恢复状态此前只保存在页面自己的 `sessionStorage`
+  - 这在同一 host 内跳页还能工作
+  - 但 OpenAI OAuth 真实联调会在：
+    - `auth.openai.com`
+    - `auth0.openai.com`
+    - `accounts.openai.com`
+    - 之间切换
+  - 一旦跨 host，旧页面写入的 `sessionStorage` 不会带到新页面
+  - 结果：
+    - 背景层已经在等待 `STEP_COMPLETE`
+    - 新页面却读不到 pending step，自然不会补发完成信号
+    - 最后表现为 `步骤 2 / 3` 超时
+
+- `background.js`
+  - 注入 CPA 面板时使用的是：
+    - `chrome.scripting.executeScript({ files: [...] })`
+  - 这条链路按 classic script 执行
+  - 但 `shared/step9-status.js` 是 ESM 文件，包含顶层 `export`
+  - 因此会在页面里直接语法报错，导致 `content/vps-panel.js` 拿不到 `HotmailRegisterStep9Status`
+
+### 本次修复
+
+- `shared/pending-signup-step-store.js`
+  - 新增按 `tabId` 保存/读取/清理 pending signup step 的纯函数
+  - 带基础 TTL 过滤，避免旧 pending 污染后续流程
+
+- `background.js`
+  - runtime 新增：
+    - `pendingSignupSteps`
+  - 新增 runtime message：
+    - `SET_PENDING_SIGNUP_STEP`
+    - `GET_PENDING_SIGNUP_STEP`
+    - `CLEAR_PENDING_SIGNUP_STEP`
+  - 页面内 `STEP_COMPLETE / STEP_ERROR` 到达时，会同步清掉对应 tab 的 pending step
+  - CPA 面板注入文件从：
+    - `shared/step9-status.js`
+    - 改为
+    - `shared/step9-status-runtime.js`
+
+- `content/utils.js`
+  - 新增对上述 pending-step runtime message 的统一调用封装
+
+- `content/signup-page.js`
+  - `read/write/clearPendingSignupStep()` 改为：
+    - 先走 background runtime 的按-tab 存储
+    - 再保留当前页面 `sessionStorage` 作为同页兜底
+  - 所有 `Step 2 / Step 3` 相关读写点都已改成 `await`
+  - 含义：
+    - 即使 OAuth 页面跨 host 切换，新的 content script 也能继续恢复 pending step
+
+- `shared/step9-status-runtime.js`
+  - 新增 classic-script 版本 helper
+  - 运行时通过 `globalThis.HotmailRegisterStep9Status.getStep9StatusOutcome(...)` 暴露给 CPA 面板脚本
+
+### fresh 验证证据
+
+```bash
+node --test tests/pending-signup-step-store.test.js tests/step9-status-runtime.test.js tests/step9-status.test.js tests/step-execution.test.js tests/content-step-signals.test.js
+npm test
+find shared content tests -name '*.js' -print0 | xargs -0 -n1 node --check
+```
+
+结果：
+
+- 新增的 pending-step tab 级存储测试通过
+- 新增的 Step 9 runtime 注入测试通过
+- 全量 `143/143` 测试通过
+- 相关 JS 语法检查通过
+
+### 仍待下一轮真实联调确认
+
+- 手动 `步骤 2`
+  - 若点击注册入口后跨到不同 OpenAI auth host
+  - 现在应由新页面继续补发：
+    - `步骤 2：页面切换后已确认进入真实注册页`
+
+- 手动 / 自动 `步骤 9`
+  - 不应再出现：
+    - `Unexpected token 'export'`
+
+- 自动运行“获取邮箱失败，新邮件查询失败 (403)”
+  - 本轮未在仓库内复现到新的前端根因
+  - 现有代码仍是把 `/api/external/emails` 或内部邮件接口的服务端错误原样透出
+  - 若该问题继续存在，下一轮应优先抓真实请求 URL、响应体和返回来源接口，判断是：
+    - external 列表链路本身报 403
+    - 还是内部 session / temp-email 接口报 403
+
 ## 2026-04-13 注册页交互节奏放慢补充（以下内容补充最新状态）
 
 - 补充时间：2026-04-13

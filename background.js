@@ -17,6 +17,11 @@ import { createContentStepSignalRegistry, settleStepWaiterFromDispatchResult } f
 import { chooseOauthTabCandidate, listAuthTabIds } from './shared/open-oauth-target.js';
 import { findLoopbackCallbackUrl } from './shared/oauth-step-helpers-core.js';
 import { decideOauthTabNavigation } from './shared/oauth-tab-navigation.js';
+import {
+  clearPendingSignupStepForTab,
+  getPendingSignupStepForTab,
+  setPendingSignupStepForTab,
+} from './shared/pending-signup-step-store.js';
 import { buildPanelTabOpenPlan } from './shared/panel-tab-plan.js';
 import { decideStep8ClickPlan } from './shared/step8-click-plan.js';
 import { pollVerificationCode } from './shared/verification-poller.js';
@@ -69,6 +74,7 @@ async function resetTransientRuntime() {
     selectedAccountAddress: '',
     currentAccount: null,
     currentEmailRecord: null,
+    pendingSignupSteps: {},
     authTabId: null,
     localhostUrl: '',
     lastSignupCode: '',
@@ -152,6 +158,25 @@ async function setStepStatus(step, status) {
       ...runtime.stepStatuses,
       [step]: status,
     },
+  });
+}
+
+async function savePendingSignupStep(tabId, payload) {
+  const runtime = await getRuntime();
+  await setRuntime({
+    pendingSignupSteps: setPendingSignupStepForTab(runtime.pendingSignupSteps || {}, tabId, payload),
+  });
+}
+
+async function readPendingSignupStep(tabId) {
+  const runtime = await getRuntime();
+  return getPendingSignupStepForTab(runtime.pendingSignupSteps || {}, tabId);
+}
+
+async function clearPendingSignupStep(tabId) {
+  const runtime = await getRuntime();
+  await setRuntime({
+    pendingSignupSteps: clearPendingSignupStepForTab(runtime.pendingSignupSteps || {}, tabId),
   });
 }
 
@@ -927,7 +952,7 @@ const handlers = {
       const tabId = await openOrReusePanelTab('vps-panel', state.vpsUrl, [
         'content/utils.js',
         'shared/oauth-step-helpers-runtime.js',
-        'shared/step9-status.js',
+        'shared/step9-status-runtime.js',
         'content/vps-panel.js',
       ]);
       const result = await sendToReadySource('vps-panel', tabId, {
@@ -1151,7 +1176,7 @@ const handlers = {
       const tabId = await openOrReusePanelTab('vps-panel', state.vpsUrl, [
         'content/utils.js',
         'shared/oauth-step-helpers-runtime.js',
-        'shared/step9-status.js',
+        'shared/step9-status-runtime.js',
         'content/vps-panel.js',
       ], {
         preserveExistingTab: true,
@@ -1432,6 +1457,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'STEP_COMPLETE') {
     Promise.all([
       setStepStatus(message.step, 'completed'),
+      (message.step === 2 || message.step === 3) && _sender?.tab?.id
+        ? clearPendingSignupStep(_sender.tab.id)
+        : Promise.resolve(),
       message.payload?.localhostUrl ? setRuntime({ localhostUrl: message.payload.localhostUrl }) : Promise.resolve(),
       addLog(`页面内步骤 ${message.step} 已完成`, 'ok'),
     ])
@@ -1448,6 +1476,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     markErrorLogged(stepError);
     Promise.all([
       setStepStatus(message.step, 'failed'),
+      (message.step === 2 || message.step === 3) && _sender?.tab?.id
+        ? clearPendingSignupStep(_sender.tab.id)
+        : Promise.resolve(),
       addLog(`页面内步骤 ${message.step} 失败：${message.error || '未知错误'}`, 'error'),
     ])
       .then(() => {
@@ -1469,6 +1500,45 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
         sendResponse({ ok: true, data: true });
       })
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === 'SET_PENDING_SIGNUP_STEP') {
+    const tabId = _sender?.tab?.id || null;
+    if (!tabId) {
+      sendResponse({ ok: false, error: '当前页面缺少 tabId，无法保存待恢复步骤' });
+      return true;
+    }
+
+    savePendingSignupStep(tabId, message.payload || {})
+      .then(() => sendResponse({ ok: true, data: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === 'GET_PENDING_SIGNUP_STEP') {
+    const tabId = _sender?.tab?.id || null;
+    if (!tabId) {
+      sendResponse({ ok: true, data: null });
+      return true;
+    }
+
+    readPendingSignupStep(tabId)
+      .then((payload) => sendResponse({ ok: true, data: payload }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === 'CLEAR_PENDING_SIGNUP_STEP') {
+    const tabId = _sender?.tab?.id || null;
+    if (!tabId) {
+      sendResponse({ ok: true, data: true });
+      return true;
+    }
+
+    clearPendingSignupStep(tabId)
+      .then(() => sendResponse({ ok: true, data: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
     return true;
   }

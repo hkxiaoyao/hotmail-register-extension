@@ -215,7 +215,14 @@ async function waitForStep5SubmitOutcome(timeout = 15000) {
   };
 }
 
-function readPendingSignupStep() {
+async function readPendingSignupStep() {
+  try {
+    const runtimePending = await utils.getPendingSignupStep?.();
+    if (runtimePending?.step) {
+      return runtimePending;
+    }
+  } catch {}
+
   try {
     const raw = sessionStorage.getItem(PENDING_SIGNUP_STEP_KEY);
     return raw ? JSON.parse(raw) : null;
@@ -224,12 +231,18 @@ function readPendingSignupStep() {
   }
 }
 
-function writePendingSignupStep(payload) {
+async function writePendingSignupStep(payload) {
   sessionStorage.setItem(PENDING_SIGNUP_STEP_KEY, JSON.stringify(payload));
+  try {
+    await utils.setPendingSignupStep?.(payload);
+  } catch {}
 }
 
-function clearPendingSignupStep() {
+async function clearPendingSignupStep() {
   sessionStorage.removeItem(PENDING_SIGNUP_STEP_KEY);
+  try {
+    await utils.clearPendingSignupStep?.();
+  } catch {}
 }
 
 function isSignupLandingPageReady() {
@@ -319,7 +332,7 @@ function findLoginAction() {
 }
 
 async function switchStep3ToLoginFlow(payload, source = 'direct') {
-  clearPendingSignupStep();
+  await clearPendingSignupStep();
   utils.log(
     source === 'existing_account'
       ? '步骤 3：检测到当前邮箱已注册，已切换到登录流程，后续转步骤 6 处理。'
@@ -458,7 +471,7 @@ async function step2OpenSignup() {
   const passwordInput = helpers.getPasswordInput();
 
   if (isExplicitVisibleSignupFlowPageReady()) {
-    clearPendingSignupStep();
+    await clearPendingSignupStep();
     utils.log('步骤 2：当前已经处于真实注册页。', 'ok');
     utils.reportComplete(2, { alreadyOnSignup: true });
     return { ok: true, alreadyOnSignup: true };
@@ -484,7 +497,7 @@ async function step2OpenSignup() {
     let clickAttempts = 0;
     while (Date.now() - startedAt < 8000) {
       if (isExplicitVisibleSignupFlowPageReady()) {
-        clearPendingSignupStep();
+        await clearPendingSignupStep();
         utils.log('步骤 2：已确认进入真实注册页。', 'ok');
         utils.reportComplete(2, { enteredSignup: true });
         return { ok: true };
@@ -502,7 +515,7 @@ async function step2OpenSignup() {
       });
 
       if (currentButton && clickAttempts < 3) {
-        writePendingSignupStep({ step: 2, startedAt: Date.now() });
+        await writePendingSignupStep({ step: 2, startedAt: Date.now() });
         utils.clickElement(currentButton);
         clickAttempts += 1;
         utils.log(`步骤 2：已点击注册入口，正在等待注册页加载（第 ${clickAttempts} 次）...`);
@@ -548,7 +561,7 @@ async function finishStep3OnPasswordPage(payload) {
 
   const submitButton = helpers.queryFirst(['button[type="submit"]', 'button[name="continue"]']);
   if (submitButton) {
-    writePendingSignupStep({
+    await writePendingSignupStep({
       step: 3,
       payload,
       phase: 'submitted',
@@ -560,7 +573,7 @@ async function finishStep3OnPasswordPage(payload) {
     await pauseForInteraction('afterPrimarySubmit');
     const passwordErrorText = getSignupPasswordValidationErrorText();
     if (isSignupPasswordCreationPageReady() && passwordErrorText) {
-      clearPendingSignupStep();
+      await clearPendingSignupStep();
       throw new Error(`步骤 3：注册密码不符合页面规则，请检查默认登录密码设置。详情：${passwordErrorText}`);
     }
   }
@@ -569,37 +582,37 @@ async function finishStep3OnPasswordPage(payload) {
   while (Date.now() - startedAt < 6000) {
     if (isProfileSetupPageReady()) {
       utils.log('步骤 3：检测到当前邮箱已进入资料页，后续将直接进入步骤 5。', 'warn');
-      clearPendingSignupStep();
+      await clearPendingSignupStep();
       utils.reportComplete(3, { address: payload.address, skipSignupVerification: true });
       return { ok: true, skipSignupVerification: true };
     }
     if (helpers.getCodeInput() || isVerificationPageStillVisible() || helpers.isEmailVerificationUrl?.(location.href)) {
-      clearPendingSignupStep();
+      await clearPendingSignupStep();
       utils.reportComplete(3, { address: payload.address });
       return { ok: true };
     }
     const passwordErrorText = getSignupPasswordValidationErrorText();
     if (isSignupPasswordCreationPageReady() && passwordErrorText) {
-      clearPendingSignupStep();
+      await clearPendingSignupStep();
       throw new Error(`步骤 3：注册密码不符合页面规则，请检查默认登录密码设置。详情：${passwordErrorText}`);
     }
     await utils.sleep(200);
   }
 
-  clearPendingSignupStep();
+  await clearPendingSignupStep();
   throw new Error('步骤 3：提交后未进入验证码页或资料页，请检查页面是否仍停留在注册密码页。');
 }
 
 async function step3FillCredentials(payload) {
   if (helpers.isEmailVerificationUrl?.(location.href) || isVerificationPageStillVisible()) {
-    clearPendingSignupStep();
+    await clearPendingSignupStep();
     utils.log('步骤 3：页面已进入邮箱验证码阶段，本步骤按已完成处理。', 'ok');
     utils.reportComplete(3, { address: payload.address });
     return { ok: true };
   }
 
   if (isProfileSetupPageReady()) {
-    clearPendingSignupStep();
+    await clearPendingSignupStep();
     utils.log('步骤 3：页面已直接进入资料页，后续将跳过注册码阶段。', 'warn');
     utils.reportComplete(3, { address: payload.address, skipSignupVerification: true });
     return { ok: true, skipSignupVerification: true };
@@ -626,7 +639,7 @@ async function step3FillCredentials(payload) {
 
   const continueButton = helpers.queryFirst(['button[type="submit"]', 'button[name="continue"]']);
   if (continueButton) {
-    writePendingSignupStep({
+    await writePendingSignupStep({
       step: 3,
       payload,
       startedAt: Date.now(),
@@ -646,14 +659,14 @@ async function step3FillCredentials(payload) {
 }
 
 async function resumePendingSignupStep() {
-  const pending = readPendingSignupStep();
+  const pending = await readPendingSignupStep();
   if (!pending?.step) {
     return;
   }
 
   if (pending.step === 2) {
     if (isExplicitVisibleSignupFlowPageReady()) {
-      clearPendingSignupStep();
+      await clearPendingSignupStep();
       utils.log('步骤 2：页面切换后已确认进入真实注册页。', 'ok');
       utils.reportComplete(2, { resumed: true });
     }
@@ -662,7 +675,7 @@ async function resumePendingSignupStep() {
 
   if (pending.step === 3 && pending.payload) {
     if (isVerificationPageStillVisible() || helpers.isEmailVerificationUrl?.(location.href)) {
-      clearPendingSignupStep();
+      await clearPendingSignupStep();
       utils.reportComplete(3, { address: pending.payload.address });
       return;
     }
@@ -671,14 +684,14 @@ async function resumePendingSignupStep() {
       return;
     }
     if (isProfileSetupPageReady()) {
-      clearPendingSignupStep();
+      await clearPendingSignupStep();
       utils.log('步骤 3：页面切换后已进入资料页，后续将直接进入步骤 5。', 'warn');
       utils.reportComplete(3, { address: pending.payload.address, skipSignupVerification: true });
       return;
     }
     const passwordErrorText = getSignupPasswordValidationErrorText();
     if (isSignupPasswordCreationPageReady() && passwordErrorText) {
-      clearPendingSignupStep();
+      await clearPendingSignupStep();
       utils.reportError(3, `步骤 3：注册密码不符合页面规则，请检查默认登录密码设置。详情：${passwordErrorText}`);
       return;
     }
@@ -689,7 +702,7 @@ async function resumePendingSignupStep() {
     try {
       await finishStep3OnPasswordPage(pending.payload);
     } catch (error) {
-      clearPendingSignupStep();
+      await clearPendingSignupStep();
       utils.reportError(3, error.message || String(error));
     }
   }
