@@ -137,6 +137,30 @@
     return /account\s+associated\s+with\s+this\s+email\s+address\s+already\s+exists|email\s+address.*already\s+exists|this\s+email\s+address\s+is\s+already\s+in\s+use|该电子邮件地址已被使用|该邮箱已被使用|账户已存在|帐户已存在/i.test(normalizeInlineText(text));
   }
 
+  function shouldTreatLoginFlowAsExistingAccount({ url = '', text = '', hasLoginAction = false } = {}) {
+    const normalized = normalizeInlineText(text);
+    if (!isExistingAccountSignalText(normalized)) {
+      return false;
+    }
+
+    return Boolean(
+      hasLoginAction
+      || isLoginFlowUrl(url)
+      || isLoginPasswordPageText(normalized)
+    );
+  }
+
+  function describeStep3LoginFlowState({ url = '', text = '', hasLoginAction = false } = {}) {
+    const normalized = normalizeInlineText(text);
+    return [
+      `url=${url || ''}`,
+      `loginFlowUrl=${isLoginFlowUrl(url)}`,
+      `loginPasswordPage=${isLoginPasswordPageText(normalized)}`,
+      `hasLoginAction=${Boolean(hasLoginAction)}`,
+      `hasExistingAccountSignal=${isExistingAccountSignalText(normalized)}`,
+    ].join('; ');
+  }
+
   function isSignupLandingPageText(text) {
     return /create\s+an\s+account|continue\s+with\s+google|continue\s+with\s+apple|continue\s+with\s+microsoft|already\s+have\s+an\s+account\?\s*log\s*in|创建(?:帐户|账户|账号)|继续使用\s*(?:google|apple|microsoft)\s*登录|已经有(?:帐户|账户|账号)了？\s*请登录/i.test(normalizeInlineText(text));
   }
@@ -181,6 +205,8 @@
     isStep8ActionText,
     normalizeInlineText,
     parseUrl,
+    describeStep3LoginFlowState,
+    shouldTreatLoginFlowAsExistingAccount,
     shouldUseStep8ContinueButton,
   };
 

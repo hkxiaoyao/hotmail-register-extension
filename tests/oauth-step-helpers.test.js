@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as oauthStepHelpersModule from '../shared/oauth-step-helpers-core.js';
 
 import {
   findLoopbackCallbackUrl,
@@ -117,6 +118,46 @@ test('isExistingAccountSignalText only matches explicit account-exists errors', 
   assert.equal(isExistingAccountSignalText('Account associated with this email address already exists'), true);
   assert.equal(isExistingAccountSignalText('This email address is already in use'), true);
   assert.equal(isExistingAccountSignalText('Already have an account? Log in'), false);
+});
+
+test('shouldTreatLoginFlowAsExistingAccount requires an explicit account-exists signal', () => {
+  assert.equal(
+    oauthStepHelpersModule.shouldTreatLoginFlowAsExistingAccount?.({
+      url: 'https://auth.openai.com/u/login/password?state=1',
+      text: 'Enter your password Forgot password',
+      hasLoginAction: false,
+    }),
+    false
+  );
+
+  assert.equal(
+    oauthStepHelpersModule.shouldTreatLoginFlowAsExistingAccount?.({
+      url: 'https://auth.openai.com/u/login/password?state=1',
+      text: 'Account associated with this email address already exists Enter your password',
+      hasLoginAction: false,
+    }),
+    true
+  );
+
+  assert.equal(
+    oauthStepHelpersModule.shouldTreatLoginFlowAsExistingAccount?.({
+      url: 'https://auth.openai.com/create-account',
+      text: 'This email address is already in use',
+      hasLoginAction: true,
+    }),
+    true
+  );
+});
+
+test('describeStep3LoginFlowState summarizes step 3 login-flow signals for logs', () => {
+  assert.equal(
+    oauthStepHelpersModule.describeStep3LoginFlowState?.({
+      url: 'https://auth.openai.com/u/login/password?state=1',
+      text: 'Enter your password Forgot password',
+      hasLoginAction: false,
+    }),
+    'url=https://auth.openai.com/u/login/password?state=1; loginFlowUrl=true; loginPasswordPage=true; hasLoginAction=false; hasExistingAccountSignal=false'
+  );
 });
 
 test('isSignupPasswordValidationErrorText matches password rule errors only', () => {

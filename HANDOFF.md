@@ -1,5 +1,91 @@
 # HANDOFF
 
+## 2026-04-13 邮箱已注册误判补充（以下内容补充最新状态）
+
+- 补充时间：2026-04-13
+- 触发背景：
+  - 用户反馈部分未注册邮箱在 Step 3 被判成“已注册”
+  - 现象不是 Outlook 平台 `已注册` 标签误打，而是 OpenAI 注册页流程里误走了“切换到登录流程”
+
+### 本次确认的根因
+
+- 仓库文档里虽然已经约定：
+  - “邮箱已注册”只认明确 `account exists` 类错误
+- 但实际实现中 `content/signup-page.js -> detectExistingAccountLoginFlow()` 仍有一条更宽的旁路：
+  - 只要当前 URL / 页面文案看起来像登录流
+  - 就直接 `switchToLoginFlow`
+  - 没有先要求页面上出现明确的“该邮箱已存在 / already exists / already in use”信号
+- 结果：
+  - 某些未注册邮箱如果因为页面跳转、状态恢复或登录页中转暂时落到 login flow
+  - 也会被误当成“已注册邮箱”
+
+### 本次修复
+
+- `shared/oauth-step-helpers-core.js`
+  - 新增 `shouldTreatLoginFlowAsExistingAccount({ url, text, hasLoginAction })`
+  - 规则收紧为：
+    - 必须先命中明确 `account exists` / `already in use` 文案
+    - 且同时满足：
+      - 已在登录流 URL，或
+      - 已显示登录密码页，或
+      - 当前页面有明确登录入口
+
+- `shared/oauth-step-helpers-runtime.js`
+  - 同步新增同名 runtime helper，供 content script 在浏览器里使用
+
+- `content/signup-page.js`
+  - `detectExistingAccountLoginFlow()` 不再因为“只是进入登录流”就直接判定为已注册
+  - 现在只有 `shouldTreatLoginFlowAsExistingAccount(...) === true` 才会走 `switchToLoginFlow`
+  - 否则返回 `null`，后续继续按注册流恢复 / 判断
+
+### 修复后的行为
+
+- 没有明确 `account exists` 信号：
+  - 即使页面暂时进入 login flow
+  - 也不会直接被判成“邮箱已注册”
+
+- 有明确 `account exists` 信号：
+  - 仍会继续按已有逻辑切到登录流程
+
+### 新增日志
+
+- `content/signup-page.js`
+  - Step 3 现在会额外输出登录流判定摘要，格式类似：
+    - `步骤 3：检测到登录流迹象，但未命中“邮箱已存在”信号，暂不判定为已注册。url=...; loginFlowUrl=true; loginPasswordPage=true; hasLoginAction=false; hasExistingAccountSignal=false`
+    - `步骤 3：命中“邮箱已存在”信号，准备切换登录流程。url=...; loginFlowUrl=true; loginPasswordPage=true; hasLoginAction=false; hasExistingAccountSignal=true`
+- 重点观察字段：
+  - `loginFlowUrl`
+  - `loginPasswordPage`
+  - `hasLoginAction`
+  - `hasExistingAccountSignal`
+- 排查建议：
+  - 如果前 3 个里至少一个为 `true`，但 `hasExistingAccountSignal=false`
+  - 说明这是“进入了登录流但没有明确已注册文案”的场景
+  - 这类日志正是用来定位你说的误判样本
+
+### 本次修改的关键文件
+
+- `shared/oauth-step-helpers-core.js`
+- `shared/oauth-step-helpers-runtime.js`
+- `content/signup-page.js`
+- `tests/oauth-step-helpers.test.js`
+
+### fresh 验证证据
+
+```bash
+node --test tests/oauth-step-helpers.test.js
+node --test tests/auto-flow.test.js
+node --check content/signup-page.js
+node --check shared/oauth-step-helpers-core.js
+node --check shared/oauth-step-helpers-runtime.js
+```
+
+结果：
+
+- 新增的“login flow 不能脱离 explicit account exists 单独判已注册”测试先红后绿
+- 相关自动流程回归测试通过
+- 相关文件语法检查通过
+
 ## 2026-04-13 临时邮箱取信错误回退补充（以下内容补充最新状态）
 
 - 补充时间：2026-04-13

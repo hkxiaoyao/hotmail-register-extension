@@ -307,13 +307,33 @@ async function switchStep3ToLoginFlow(payload, source = 'direct') {
 }
 
 async function detectExistingAccountLoginFlow(payload, timeout = 8000) {
-  if (helpers.isLoginFlowUrl?.(location.href) || helpers.isLoginPasswordPageText(getPageTextSnapshot())) {
-    return switchStep3ToLoginFlow(payload, 'direct');
-  }
-
   const pageText = getPageTextSnapshot();
   const loginAction = findLoginAction();
-  if (!helpers.isExistingAccountSignalText?.(pageText) || !loginAction) {
+  const loginFlowStateSummary = helpers.describeStep3LoginFlowState?.({
+    url: location.href,
+    text: pageText,
+    hasLoginAction: Boolean(loginAction),
+  }) || `url=${location.href}`;
+  const shouldSwitchToLoginFlow = helpers.shouldTreatLoginFlowAsExistingAccount?.({
+    url: location.href,
+    text: pageText,
+    hasLoginAction: Boolean(loginAction),
+  });
+
+  if (!shouldSwitchToLoginFlow) {
+    if (helpers.isLoginFlowUrl?.(location.href) || helpers.isLoginPasswordPageText(pageText) || loginAction) {
+      utils.log(`步骤 3：检测到登录流迹象，但未命中“邮箱已存在”信号，暂不判定为已注册。${loginFlowStateSummary}`, 'warn');
+    }
+    return null;
+  }
+
+  utils.log(`步骤 3：命中“邮箱已存在”信号，准备切换登录流程。${loginFlowStateSummary}`, 'warn');
+
+  if (helpers.isLoginFlowUrl?.(location.href) || helpers.isLoginPasswordPageText(pageText)) {
+    return switchStep3ToLoginFlow(payload, 'existing_account');
+  }
+
+  if (!loginAction) {
     return null;
   }
 
