@@ -1,5 +1,264 @@
 # HANDOFF
 
+## 2026-04-13 未读优先与本地已消费验证码邮件去重补充（以下内容补充最新状态）
+
+- 补充时间：2026-04-13
+- 触发背景：
+  - 用户希望在无法控制后端、不能真正“把邮件设为已读”的前提下
+  - 仍能尽量避免重复使用旧验证码邮件
+  - 目标是：
+    - 优先只检查未读邮件
+    - 一旦验证码真正使用成功，就在本地记住该邮件
+    - 后续轮询跳过它
+
+### 本次修改
+
+- `shared/luckmail-client.js`
+  - `normalizeMail()` 现在会保留列表接口里的 `is_read`
+  - 规范化后字段为：
+    - `isRead`
+
+- `shared/verification-poller.js`
+  - `pollVerificationCode()` 新增支持：
+    - `unreadOnly`
+    - `consumedMessageIds`
+  - 匹配逻辑现在会跳过：
+    - `isRead === true` 的邮件
+    - 已出现在本地消费记录里的 `messageId`
+
+- `shared/consumed-mail-ledger.js`
+  - 新增轻量本地 ledger 工具：
+    - `markVerificationMailConsumed()`
+    - `getConsumedMessageIds()`
+    - `pruneConsumedMailLedger()`
+  - 只保存极小记录：
+    - `messageId`
+    - `usedAt`
+  - 默认策略：
+    - TTL：`7 天`
+    - 每个邮箱最多保留 `100` 条
+  - 含义：
+    - 不保存完整正文 / HTML
+    - 本地存储压力很小
+
+- `shared/state-machine.js`
+  - `DEFAULT_SETTINGS` 新增：
+    - `consumedVerificationMails`
+  - 作为持久化本地设置存进 `chrome.storage.local`
+  - `DEFAULT_RUNTIME` 新增：
+    - `lastSignupMail`
+    - `lastLoginMail`
+
+- `background.js`
+  - 轮询验证码时会：
+    - 只查未读邮件
+    - 读取本地 `consumedVerificationMails`
+    - 聚合当前账号 / resolved email / alias 相关 key 下的已消费 `messageId`
+    - 传给轮询器跳过
+  - 当 `FILL_LAST_CODE` 真正成功后：
+    - 才把本次验证码邮件写入本地 ledger
+    - 然后清空对应的：
+      - `lastSignupCode` / `lastLoginCode`
+      - `lastSignupMail` / `lastLoginMail`
+  - 这样不会在“只是取码，还没成功使用”时过早消费邮件
+
+- `shared/auto-restart.js`
+  - 自动重启运行时也会清掉：
+    - `lastSignupMail`
+    - `lastLoginMail`
+  - 避免上一轮残留 mail metadata 误带到下一轮
+
+### 修复后的行为
+
+- 当前验证码轮询优先只看未读邮件
+- 若某封验证码邮件已经成功被回填使用：
+  - 本地会记住它的 `messageId`
+  - 后续即使它仍保持未读，也会被跳过
+- 本地记录是轻量且可裁剪的，不会持续膨胀
+
+### 本次修改的关键文件
+
+- `shared/luckmail-client.js`
+- `shared/verification-poller.js`
+- `shared/consumed-mail-ledger.js`
+- `shared/state-machine.js`
+- `background.js`
+- `shared/auto-restart.js`
+- `tests/verification-poller.test.js`
+- `tests/consumed-mail-ledger.test.js`
+- `tests/auto-restart.test.js`
+
+### fresh 验证证据
+
+```bash
+node --test tests/consumed-mail-ledger.test.js tests/verification-poller.test.js tests/auto-restart.test.js
+node --test tests/auto-flow.test.js tests/continue-auto-flow.test.js tests/verification-recovery.test.js
+node --check background.js shared/verification-poller.js shared/consumed-mail-ledger.js shared/state-machine.js shared/luckmail-client.js shared/auto-restart.js
+```
+
+结果：
+
+- 新增的“只看未读 + 跳过已消费邮件”测试通过
+- 新增的轻量 ledger 裁剪测试通过
+- 自动流程 / 继续流程 / 验证码恢复回归测试通过
+- 相关文件语法检查通过
+
+## 2026-04-13 OpenAI 临时登录码正文提取补充（以下内容补充最新状态）
+
+- 补充时间：2026-04-13
+- 触发背景：
+  - 用户提供了一类真实邮件：
+    - 主题：`Your temporary OpenAI login code`
+    - 发件人：`noreply@tm.openai.com`
+    - 列表接口只有截断的 `body_preview`
+    - 验证码只出现在邮件详情 HTML / 正文里，不在标题中
+  - 结果是插件轮询时“看起来收不到验证码”
+
+### 本次确认的根因
+
+- 问题不在“不会拉邮件详情”，而在“拉详情之前就把邮件过滤掉了”
+
+- `shared/verification-poller.js`
+  - 旧逻辑本地匹配只看：
+    - `subject`
+    - `from`
+    - `body_preview/bodyText`
+  - 如果 `keyword` 只存在于邮件详情正文，不在标题和 preview 里
+  - 这封邮件会先被本地 `matchesMail()` 排除
+  - 后续根本到不了 `getEmailDetail()` 这一步
+
+- `background.js`
+  - 旧逻辑把：
+    - `keyword: state.mailKeyword`
+    - `subjectContains: state.mailKeyword`
+  - 同时传给轮询器
+  - 等于把“关键字”又额外收紧成“主题必须包含”
+  - 像 `verification` 这种只出现在正文、主题没有的邮件，会被更早挡掉
+
+### 本次修复
+
+- `shared/verification-poller.js`
+  - 拆分匹配逻辑：
+    - `matchesMailBase()` 只看 `fromIncludes` / `subjectContains`
+    - `keyword` 允许在详情正文里补匹配
+  - 当列表邮件满足基础条件、但 preview 里没有关键字或验证码时：
+    - 允许继续请求 `getEmailDetail()`
+    - 再用 `detail.subject + detail.bodyText + detail.body` 做关键字匹配与验证码提取
+  - 这样就能覆盖：
+    - 列表无验证码
+    - 列表无完整正文
+    - 关键字只出现在详情正文
+
+- `background.js`
+  - 轮询参数不再把 `mailKeyword` 强行映射到 `subjectContains`
+  - 现在默认：
+    - `keyword = state.mailKeyword`
+    - `subjectContains = ''`
+  - 含义：
+    - 关键字交给“主题 / preview / 正文”综合匹配
+    - 不再额外要求“主题必须包含关键字”
+
+### 修复后的行为
+
+- 对于类似：
+  - `Your temporary OpenAI login code`
+  - `noreply@tm.openai.com`
+  - 验证码只在详情 HTML 正文里
+- 当前轮询会：
+  1. 先识别为候选新邮件
+  2. 发现 preview 中提不出验证码
+  3. 自动补拉 `/api/email/<email>/<message_id>`
+  4. 从详情正文中提取例如 `060907`
+
+### 本次修改的关键文件
+
+- `shared/verification-poller.js`
+- `background.js`
+- `tests/verification-poller.test.js`
+
+### fresh 验证证据
+
+```bash
+node --test tests/verification-poller.test.js
+node --test tests/verification-recovery.test.js tests/auto-flow.test.js
+node --check shared/verification-poller.js
+node --check background.js
+```
+
+结果：
+
+- 新增的“关键字只存在详情正文时，仍能拉详情并提取验证码”测试通过
+- 相关验证码恢复与自动流程回归测试通过
+- 相关文件语法检查通过
+
+## 2026-04-13 Step 5 资料随机化补充（以下内容补充最新状态）
+
+- 补充时间：2026-04-13
+- 触发背景：
+  - 用户希望 Step 5 的姓名和年龄不要再固定为 `Alex Stone`
+  - 需要每轮填写资料时更随机、更接近真实联调场景
+
+### 本次修改
+
+- `shared/oauth-step-helpers-core.js`
+  - 新增 `buildRandomProfile(randomFn)`
+  - 每次生成一组资料：
+    - `firstName`
+    - `lastName`
+    - `fullName`
+    - `age`
+    - `birthday`
+  - 当前范围：
+    - 名字从扩大的英文名池随机选取
+    - 年龄随机在 `19-42`
+    - 生日按“当前年份 - 年龄”生成，并随机月份 / 日期
+
+- `shared/oauth-step-helpers-runtime.js`
+  - 同步新增同名 runtime helper，供认证页 content script 直接使用
+
+- `content/signup-page.js`
+  - `step5FillProfile()` 不再写死：
+    - `Alex Stone`
+    - `28`
+    - `1996-08-17`
+  - 改为每次调用 `helpers.buildRandomProfile()`
+  - 若页面是：
+    - 单一全名输入框：填写 `fullName`
+    - 分离 first/last name：分别填写 `firstName` / `lastName`
+    - age 输入框：填写随机 `age`
+    - birthday 输入框：填写随机 `birthday`
+
+### 修复后的行为
+
+- 每次进入 Step 5：
+  - 姓名不再固定
+  - 年龄不再固定
+  - 生日也会随年龄一起变化
+  - 并且年龄始终大于 `18`
+
+### 本次修改的关键文件
+
+- `shared/oauth-step-helpers-core.js`
+- `shared/oauth-step-helpers-runtime.js`
+- `content/signup-page.js`
+- `tests/oauth-step-helpers.test.js`
+
+### fresh 验证证据
+
+```bash
+node --test tests/oauth-step-helpers.test.js
+node --test tests/auto-flow.test.js
+node --check content/signup-page.js
+node --check shared/oauth-step-helpers-core.js
+node --check shared/oauth-step-helpers-runtime.js
+```
+
+结果：
+
+- 新增的 Step 5 随机资料生成测试通过
+- 自动流程回归测试通过
+- 相关文件语法检查通过
+
 ## 2026-04-13 邮箱已注册误判补充（以下内容补充最新状态）
 
 - 补充时间：2026-04-13

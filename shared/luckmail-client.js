@@ -74,6 +74,7 @@ function normalizeMail(mail = {}) {
     bodyHtml: mail.mail_body_html || mail.body_html || '',
     receivedAt: mail.date || mail.received_at || '',
     folder: mail.folder || '',
+    isRead: Boolean(mail.is_read),
   };
 }
 

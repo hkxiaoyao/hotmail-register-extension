@@ -12,9 +12,10 @@ export function buildAutoRestartRuntimeUpdates({
     currentEmailRecord: null,
     localhostUrl: '',
     lastSignupCode: '',
+    lastSignupMail: null,
     lastLoginCode: '',
+    lastLoginMail: null,
     autoPaused: false,
     stopRequested: false,
   };
 }
-

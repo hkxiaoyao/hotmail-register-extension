@@ -160,6 +160,33 @@ test('describeStep3LoginFlowState summarizes step 3 login-flow signals for logs'
   );
 });
 
+test('buildRandomProfile returns varied profile data for step 5', () => {
+  const currentYear = new Date().getUTCFullYear();
+  const firstProfile = oauthStepHelpersModule.buildRandomProfile?.(() => 0);
+  const secondProfile = oauthStepHelpersModule.buildRandomProfile?.(() => 0.99);
+
+  assert.deepEqual(firstProfile, {
+    firstName: 'Adrian',
+    lastName: 'Bennett',
+    fullName: 'Adrian Bennett',
+    age: '19',
+    birthday: `${currentYear - 19}-01-01`,
+  });
+
+  assert.deepEqual(secondProfile, {
+    firstName: 'Wyatt',
+    lastName: 'Winslow',
+    fullName: 'Wyatt Winslow',
+    age: '42',
+    birthday: `${currentYear - 42}-12-28`,
+  });
+
+  assert.ok(Number(firstProfile.age) > 18);
+  assert.ok(Number(secondProfile.age) > 18);
+  assert.notEqual(firstProfile.fullName, secondProfile.fullName);
+  assert.notEqual(firstProfile.age, secondProfile.age);
+});
+
 test('isSignupPasswordValidationErrorText matches password rule errors only', () => {
   assert.equal(isSignupPasswordValidationErrorText('Your password must contain: At least 12 characters'), true);
   assert.equal(isSignupPasswordValidationErrorText('密码必须包含至少 12 个字符'), true);

@@ -13,6 +13,7 @@ export const DEFAULT_SETTINGS = {
   pollTimeoutSec: 60,
   mailKeyword: '',
   mailFromKeyword: '',
+  consumedVerificationMails: {},
   recordSuccessResults: false,
   successResults: [],
   usedAccounts: {},
@@ -27,6 +28,8 @@ export const DEFAULT_RUNTIME = {
   localhostUrl: '',
   lastSignupCode: '',
   lastLoginCode: '',
+  lastSignupMail: null,
+  lastLoginMail: null,
   autoRunning: false,
   autoPaused: false,
   stopRequested: false,
@@ -48,6 +51,22 @@ export const DEFAULT_RUNTIME = {
 };
 
 export function sanitizeSettings(input = {}) {
+  const consumedVerificationMails = input.consumedVerificationMails && typeof input.consumedVerificationMails === 'object'
+    ? Object.fromEntries(
+      Object.entries(input.consumedVerificationMails).map(([email, entries]) => [
+        String(email || '').trim().toLowerCase(),
+        Array.isArray(entries)
+          ? entries
+            .map((entry) => ({
+              messageId: String(entry?.messageId || '').trim(),
+              usedAt: String(entry?.usedAt || '').trim(),
+            }))
+            .filter((entry) => entry.messageId && entry.usedAt)
+          : [],
+      ])
+    )
+    : {};
+
   return {
     apiKey: String(input.apiKey || '').trim(),
     mailApiBaseUrl: String(input.mailApiBaseUrl || '').trim(),
@@ -63,6 +82,7 @@ export function sanitizeSettings(input = {}) {
     pollTimeoutSec: Math.max(5, Number(input.pollTimeoutSec) || DEFAULT_SETTINGS.pollTimeoutSec),
     mailKeyword: String(input.mailKeyword || '').trim(),
     mailFromKeyword: String(input.mailFromKeyword || '').trim(),
+    consumedVerificationMails,
     recordSuccessResults: Boolean(input.recordSuccessResults),
     successResults: Array.isArray(input.successResults) ? [...input.successResults] : [],
     usedAccounts: input.usedAccounts && typeof input.usedAccounts === 'object'

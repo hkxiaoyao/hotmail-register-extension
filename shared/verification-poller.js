@@ -18,15 +18,21 @@ function buildMailCodeText(mail = {}) {
   return `${mail.subject || ''} ${mail.bodyText || ''} ${mail.bodyHtml || ''}`.trim();
 }
 
-function matchesMail(mail, match = {}) {
-  const keyword = String(match.keyword || '').trim().toLowerCase();
+function buildMailMatchText(mail = {}) {
+  return `${mail.subject || ''} ${mail.from || ''} ${mail.bodyText || ''} ${mail.bodyHtml || ''}`.toLowerCase();
+}
+
+function matchesMailBase(mail, match = {}, options = {}) {
   const fromIncludes = String(match.fromIncludes || '').trim().toLowerCase();
   const subjectContains = String(match.subjectContains || '').trim().toLowerCase();
+  const unreadOnly = Boolean(options.unreadOnly);
+  const consumedMessageIds = options.consumedMessageIds instanceof Set
+    ? options.consumedMessageIds
+    : new Set(options.consumedMessageIds || []);
 
   const subject = String(mail.subject || '').toLowerCase();
   const from = String(mail.from || '').toLowerCase();
-  const preview = String(mail.bodyText || '').toLowerCase();
-  const haystack = `${subject} ${from} ${preview}`;
+  const messageId = String(mail.messageId || '').trim();
 
   if (subjectContains && !subject.includes(subjectContains)) {
     return false;
@@ -34,16 +40,46 @@ function matchesMail(mail, match = {}) {
   if (fromIncludes && !from.includes(fromIncludes)) {
     return false;
   }
+  if (unreadOnly && mail?.isRead) {
+    return false;
+  }
+  if (messageId && consumedMessageIds.has(messageId)) {
+    return false;
+  }
+  return true;
+}
+
+function matchesKeywordText(text, keyword) {
+  const normalizedKeyword = String(keyword || '').trim().toLowerCase();
+  if (!normalizedKeyword) {
+    return true;
+  }
+  return String(text || '').toLowerCase().includes(normalizedKeyword);
+}
+
+function matchesMail(mail, match = {}, options = {}) {
+  if (!matchesMailBase(mail, match, options)) {
+    return false;
+  }
+  const keyword = String(match.keyword || '').trim().toLowerCase();
+  const haystack = buildMailMatchText(mail);
   if (keyword && !haystack.includes(keyword)) {
     return false;
   }
   return true;
 }
 
-function selectFreshMail(mails, minReceivedAt, match, freshnessGraceMs = 0) {
+function selectFreshMail(mails, minReceivedAt, match, freshnessGraceMs = 0, {
+  allowKeywordFallback = false,
+  unreadOnly = false,
+  consumedMessageIds = [],
+} = {}) {
   const minTimestamp = parseTimestamp(minReceivedAt);
   return mails.find((mail) => {
-    if (!matchesMail(mail, match)) {
+    const matches = allowKeywordFallback
+      ? matchesMailBase(mail, match, { unreadOnly, consumedMessageIds })
+      : matchesMail(mail, match, { unreadOnly, consumedMessageIds });
+    if (!matches) {
       return false;
     }
     const receivedAt = parseTimestamp(mail.receivedAt);
@@ -70,6 +106,8 @@ export async function pollVerificationCode({
   round = 1,
   maxRounds = 1,
   phaseLabel = '验证码',
+  unreadOnly = false,
+  consumedMessageIds = [],
 } = {}) {
   if (!client?.listUserEmailMails) {
     throw new Error('邮件平台客户端缺少 listUserEmailMails 接口');
@@ -79,8 +117,10 @@ export async function pollVerificationCode({
   }
 
   async function tryExtractCodeFromMail(mail, resolvedEmail) {
+    const previewMatchText = buildMailMatchText(mail);
+    const previewMatchesKeyword = matchesKeywordText(previewMatchText, match.keyword);
     const previewCode = extractVerificationCode(buildMailCodeText(mail));
-    if (previewCode) {
+    if (previewCode && previewMatchesKeyword) {
       return {
         code: previewCode,
         mail,
@@ -97,6 +137,15 @@ export async function pollVerificationCode({
         folder: mail.folder || 'inbox',
         isTemp: Boolean(mailboxContext?.isTemp),
       });
+      const detailMatchText = buildMailMatchText({
+        subject: detail.subject || mail.subject || '',
+        from: detail.from || mail.from || '',
+        bodyText: detail.bodyText || '',
+        bodyHtml: detail.body || '',
+      });
+      if (!matchesKeywordText(`${previewMatchText} ${detailMatchText}`, match.keyword)) {
+        return null;
+      }
       const detailCode = extractVerificationCode(`${detail.subject || ''} ${detail.bodyText || ''} ${detail.body || ''}`);
       if (!detailCode) {
         return null;
@@ -120,6 +169,8 @@ export async function pollVerificationCode({
   let latestMatchingResolvedEmail = '';
   let latestMatchingAlias = '';
   let attempt = 0;
+  const allowKeywordFallback = Boolean(detailFetcher?.getEmailDetail);
+  const consumedMessageIdSet = new Set(consumedMessageIds || []);
   while (Date.now() <= deadline) {
     attempt += 1;
     if (typeof shouldContinue === 'function') {
@@ -134,13 +185,21 @@ export async function pollVerificationCode({
       keyword: match.keyword,
       isTemp: Boolean(mailboxContext?.isTemp),
     });
-    const matchingMails = (result.emails || []).filter((mail) => matchesMail(mail, match));
+    const matchingMails = (result.emails || []).filter((mail) => (
+      allowKeywordFallback
+        ? matchesMailBase(mail, match, { unreadOnly, consumedMessageIds: consumedMessageIdSet })
+        : matchesMail(mail, match, { unreadOnly, consumedMessageIds: consumedMessageIdSet })
+    ));
     if (matchingMails.length > 0) {
       latestMatchingMail = matchingMails[0];
       latestMatchingResolvedEmail = result.resolvedEmail || email;
       latestMatchingAlias = result.matchedAlias || '';
     }
-    const newestMail = selectFreshMail(result.emails || [], minReceivedAt, match, freshnessGraceMs);
+    const newestMail = selectFreshMail(result.emails || [], minReceivedAt, match, freshnessGraceMs, {
+      allowKeywordFallback,
+      unreadOnly,
+      consumedMessageIds: consumedMessageIdSet,
+    });
     const remainSeconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
 
     if (newestMail) {

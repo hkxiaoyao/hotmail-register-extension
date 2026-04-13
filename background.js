@@ -9,6 +9,7 @@ import {
 import { continueSingleAutoFlow, runAutoFlowBatch, runSingleAutoFlow } from './shared/auto-flow.js';
 import { createAutoRunPausedError } from './shared/auto-run-control.js';
 import { buildAutoRestartRuntimeUpdates } from './shared/auto-restart.js';
+import { getConsumedMessageIds, markVerificationMailConsumed } from './shared/consumed-mail-ledger.js';
 import { createInternalSessionClient } from './shared/internal-session-client.js';
 import { createLuckmailClient } from './shared/luckmail-client.js';
 import { resolveLoginPassword } from './shared/login-password.js';
@@ -72,7 +73,66 @@ async function resetTransientRuntime() {
     localhostUrl: '',
     lastSignupCode: '',
     lastLoginCode: '',
+    lastSignupMail: null,
+    lastLoginMail: null,
   });
+}
+
+function compactVerificationMailResult(result = {}) {
+  const messageId = String(result?.mail?.messageId || '').trim();
+  if (!messageId) {
+    return null;
+  }
+
+  return {
+    messageId,
+    resolvedEmail: result.resolvedEmail || '',
+    matchedAlias: result.matchedAlias || '',
+    folder: result?.mail?.folder || 'inbox',
+    receivedAt: result.receivedAt || '',
+  };
+}
+
+function getVerificationMailRuntimeKey(phase) {
+  return phase === 'signup' ? 'lastSignupMail' : 'lastLoginMail';
+}
+
+function getVerificationCodeRuntimeKey(phase) {
+  return phase === 'signup' ? 'lastSignupCode' : 'lastLoginCode';
+}
+
+function collectVerificationLedgerEmails(state = {}, mailMeta = {}) {
+  return Array.from(new Set([
+    state.currentAccount?.address,
+    state.currentEmailRecord?.address,
+    state.currentEmailRecord?.resolvedEmail,
+    mailMeta?.resolvedEmail,
+    mailMeta?.matchedAlias,
+    ...(Array.isArray(state.currentEmailRecord?.aliases) ? state.currentEmailRecord.aliases : []),
+  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)));
+}
+
+async function markVerificationMailUsed(state, phase) {
+  const mailMeta = phase === 'signup' ? state.lastSignupMail : state.lastLoginMail;
+  if (!mailMeta?.messageId) {
+    return false;
+  }
+
+  const emails = collectVerificationLedgerEmails(state, mailMeta);
+  let nextLedger = state.consumedVerificationMails || {};
+  const usedAt = new Date().toISOString();
+
+  for (const email of emails) {
+    nextLedger = markVerificationMailConsumed(nextLedger, {
+      email,
+      messageId: mailMeta.messageId,
+      usedAt,
+    });
+  }
+
+  await setSettings({ consumedVerificationMails: nextLedger });
+  await addLog(`步骤 ${phase === 'signup' ? 4 : 7}：已记录本次验证码邮件，后续将跳过 messageId=${mailMeta.messageId}`, 'info');
+  return true;
 }
 
 async function addLog(message, level = 'info') {
@@ -538,6 +598,10 @@ async function pollCodeForPhase(state, phase) {
   const phaseLabel = phase === 'signup' ? '注册验证码' : '登录验证码';
   const phaseStartedAt = new Date().toISOString();
   const client = buildClient(state);
+  const consumedMessageIds = getConsumedMessageIds(
+    state.consumedVerificationMails || {},
+    collectVerificationLedgerEmails(state)
+  );
   const result = await pollVerificationCodeWithResend({
     step,
     maxRounds: 3,
@@ -570,6 +634,8 @@ async function pollCodeForPhase(state, phase) {
         round,
         maxRounds: 3,
         phaseLabel,
+        unreadOnly: true,
+        consumedMessageIds,
         shouldContinue: async () => {
           await ensureAutoFlowActive();
           return true;
@@ -577,16 +643,22 @@ async function pollCodeForPhase(state, phase) {
         match: {
           keyword: state.mailKeyword,
           fromIncludes: state.mailFromKeyword,
-          subjectContains: state.mailKeyword,
+          subjectContains: '',
         },
       });
     },
   });
 
   if (phase === 'signup') {
-    await setRuntime({ lastSignupCode: result.code });
+    await setRuntime({
+      lastSignupCode: result.code,
+      lastSignupMail: compactVerificationMailResult(result),
+    });
   } else {
-    await setRuntime({ lastLoginCode: result.code });
+    await setRuntime({
+      lastLoginCode: result.code,
+      lastLoginMail: compactVerificationMailResult(result),
+    });
   }
   const aliasText = result.matchedAlias ? `，别名命中 ${result.matchedAlias}` : '';
   const detailText = result.extractedFromDetail ? '（来自邮件详情）' : '';
@@ -1323,7 +1395,13 @@ const handlers = {
       throw new Error('当前没有可填写的验证码');
     }
     return runManagedStep(step, async () => {
-      return sendToActiveAuthTab({ type: 'FILL_CODE', step, payload: { code } });
+      const result = await sendToActiveAuthTab({ type: 'FILL_CODE', step, payload: { code } });
+      await markVerificationMailUsed(state, phase);
+      await setRuntime({
+        [getVerificationCodeRuntimeKey(phase)]: '',
+        [getVerificationMailRuntimeKey(phase)]: null,
+      });
+      return result;
     }, {
       startMessage: '',
       successMessage: '',

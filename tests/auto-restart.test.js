@@ -15,7 +15,9 @@ test('buildAutoRestartRuntimeUpdates keeps current account index when restarting
     currentEmailRecord: null,
     localhostUrl: '',
     lastSignupCode: '',
+    lastSignupMail: null,
     lastLoginCode: '',
+    lastLoginMail: null,
     autoPaused: false,
     stopRequested: false,
   });
@@ -33,9 +35,10 @@ test('buildAutoRestartRuntimeUpdates advances to next account when restarting wi
     currentEmailRecord: null,
     localhostUrl: '',
     lastSignupCode: '',
+    lastSignupMail: null,
     lastLoginCode: '',
+    lastLoginMail: null,
     autoPaused: false,
     stopRequested: false,
   });
 });
-

@@ -223,6 +223,57 @@ test('pollVerificationCode fetches message detail when preview does not contain 
   assert.equal(result.extractedFromDetail, true);
 });
 
+test('pollVerificationCode can extract code from detail when keyword exists only in full body', async () => {
+  let detailRequested = 0;
+
+  const result = await pollVerificationCode({
+    client: {
+      async listUserEmailMails() {
+        return {
+          resolvedEmail: 'user@hotmail.com',
+          emails: [
+            {
+              messageId: 'm10',
+              subject: 'Your temporary OpenAI login code',
+              bodyText: '<html><head><title>Your temporary OpenAI login code</title></head><body>preview truncated</body></html>',
+              from: 'noreply@tm.openai.com',
+              receivedAt: '2026-04-13T09:43:42Z',
+              folder: 'inbox',
+            },
+          ],
+        };
+      },
+    },
+    detailFetcher: {
+      async getEmailDetail(email, messageId, options = {}) {
+        detailRequested += 1;
+        assert.equal(email, 'user@hotmail.com');
+        assert.equal(messageId, 'm10');
+        assert.equal(options.folder, 'inbox');
+        return {
+          subject: 'Your temporary OpenAI login code',
+          body: '<div>Enter this temporary verification code to continue: <b>060907</b></div>',
+          bodyText: 'Enter this temporary verification code to continue: 060907',
+          from: 'noreply@tm.openai.com',
+        };
+      },
+    },
+    email: 'user@hotmail.com',
+    intervalMs: 1,
+    timeoutMs: 10,
+    match: {
+      fromIncludes: 'tm.openai.com',
+      keyword: 'verification',
+      subjectContains: '',
+    },
+  });
+
+  assert.equal(detailRequested, 1);
+  assert.equal(result.code, '060907');
+  assert.equal(result.mail.messageId, 'm10');
+  assert.equal(result.extractedFromDetail, true);
+});
+
 test('pollVerificationCode forwards temp mailbox context to list and detail fetchers', async () => {
   const result = await pollVerificationCode({
     client: {
@@ -285,4 +336,54 @@ test('pollVerificationCode times out with readable message', async () => {
     }),
     /轮询超时/
   );
+});
+
+test('pollVerificationCode skips read and consumed mails when configured', async () => {
+  const result = await pollVerificationCode({
+    client: {
+      async listUserEmailMails() {
+        return {
+          resolvedEmail: 'user@hotmail.com',
+          emails: [
+            {
+              messageId: 'm1',
+              subject: 'OpenAI verification code',
+              bodyText: 'Use code 111111',
+              from: 'noreply@openai.com',
+              receivedAt: '2026-04-13T09:40:00Z',
+              isRead: true,
+            },
+            {
+              messageId: 'm2',
+              subject: 'OpenAI verification code',
+              bodyText: 'Use code 222222',
+              from: 'noreply@openai.com',
+              receivedAt: '2026-04-13T09:41:00Z',
+              isRead: false,
+            },
+            {
+              messageId: 'm3',
+              subject: 'OpenAI verification code',
+              bodyText: 'Use code 333333',
+              from: 'noreply@openai.com',
+              receivedAt: '2026-04-13T09:42:00Z',
+              isRead: false,
+            },
+          ],
+        };
+      },
+    },
+    email: 'user@hotmail.com',
+    intervalMs: 1,
+    timeoutMs: 10,
+    unreadOnly: true,
+    consumedMessageIds: ['m3'],
+    match: {
+      fromIncludes: 'openai.com',
+      keyword: 'OpenAI',
+    },
+  });
+
+  assert.equal(result.code, '222222');
+  assert.equal(result.mail.messageId, 'm2');
 });

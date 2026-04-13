@@ -161,6 +161,38 @@
     ].join('; ');
   }
 
+  function pickFromList(values = [], randomFn = Math.random) {
+    if (!values.length) {
+      return '';
+    }
+
+    const index = Math.min(values.length - 1, Math.floor(randomFn() * values.length));
+    return values[index];
+  }
+
+  function pad2(value) {
+    return String(value).padStart(2, '0');
+  }
+
+  function buildRandomProfile(randomFn = Math.random) {
+    const firstNames = ['Adrian', 'Blake', 'Calvin', 'Damian', 'Elliot', 'Felix', 'Gavin', 'Holden', 'Isaac', 'Julian', 'Kieran', 'Landon', 'Miles', 'Nolan', 'Oscar', 'Parker', 'Quentin', 'Rowan', 'Sawyer', 'Theo', 'Vincent', 'Wesley', 'Xavier', 'Wyatt'];
+    const lastNames = ['Bennett', 'Caldwell', 'Dalton', 'Ellis', 'Fletcher', 'Griffin', 'Hawkins', 'Iverson', 'Jennings', 'Kensington', 'Lawson', 'Mitchell', 'North', 'Prescott', 'Quincy', 'Remington', 'Sullivan', 'Tatum', 'Underwood', 'Vaughn', 'Walker', 'Whitman', 'York', 'Winslow'];
+    const numericAge = 19 + Math.floor(randomFn() * 24);
+    const birthYear = new Date().getUTCFullYear() - numericAge;
+    const birthMonth = 1 + Math.floor(randomFn() * 12);
+    const birthDay = 1 + Math.floor(randomFn() * 28);
+    const firstName = pickFromList(firstNames, randomFn);
+    const lastName = pickFromList(lastNames, randomFn);
+
+    return {
+      firstName,
+      lastName,
+      fullName: `${firstName} ${lastName}`,
+      age: String(numericAge),
+      birthday: `${birthYear}-${pad2(birthMonth)}-${pad2(birthDay)}`,
+    };
+  }
+
   function isSignupLandingPageText(text) {
     return /create\s+an\s+account|continue\s+with\s+google|continue\s+with\s+apple|continue\s+with\s+microsoft|already\s+have\s+an\s+account\?\s*log\s*in|创建(?:帐户|账户|账号)|继续使用\s*(?:google|apple|microsoft)\s*登录|已经有(?:帐户|账户|账号)了？\s*请登录/i.test(normalizeInlineText(text));
   }
@@ -189,6 +221,7 @@
     findLoopbackCallbackUrl,
     findStep9SuccessText,
     findStep9TimeoutText,
+    buildRandomProfile,
     isEmailVerificationUrl,
     isExistingAccountSignalText,
     isExplicitSignupFlowPageText,

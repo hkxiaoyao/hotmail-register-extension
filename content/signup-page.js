@@ -872,9 +872,13 @@ async function fillCode(payload) {
 }
 
 async function step5FillProfile() {
-  const fullName = 'Alex Stone';
-  const age = '28';
-  const birthday = '1996-08-17';
+  const profile = helpers.buildRandomProfile?.() || {
+    firstName: 'Ethan',
+    lastName: 'Carter',
+    fullName: 'Ethan Carter',
+    age: '26',
+    birthday: '2000-01-01',
+  };
   const waitStartedAt = Date.now();
   let singleNameInput = null;
   let firstNameInput = null;
@@ -905,24 +909,24 @@ async function step5FillProfile() {
   }
 
   if (singleNameInput && isVisibleElement(singleNameInput)) {
-    utils.setInputValue(singleNameInput, fullName);
-    utils.log(`步骤 5：姓名已填写：${fullName}`);
+    utils.setInputValue(singleNameInput, profile.fullName);
+    utils.log(`步骤 5：姓名已填写：${profile.fullName}`);
   } else if ((firstNameInput && isVisibleElement(firstNameInput)) && (lastNameInput && isVisibleElement(lastNameInput))) {
-    utils.setInputValue(firstNameInput, 'Alex');
-    utils.setInputValue(lastNameInput, 'Stone');
-    utils.log(`步骤 5：姓名已填写：${fullName}`);
+    utils.setInputValue(firstNameInput, profile.firstName);
+    utils.setInputValue(lastNameInput, profile.lastName);
+    utils.log(`步骤 5：姓名已填写：${profile.fullName}`);
   } else {
     throw new Error(`步骤 5：未找到可填写的姓名字段。URL: ${location.href}`);
   }
 
   if (ageInput && isVisibleElement(ageInput)) {
-    utils.setInputValue(ageInput, age);
-    utils.log(`步骤 5：年龄已填写：${age}`);
+    utils.setInputValue(ageInput, profile.age);
+    utils.log(`步骤 5：年龄已填写：${profile.age}`);
   } else if (birthdayInput) {
-    birthdayInput.value = birthday;
+    birthdayInput.value = profile.birthday;
     birthdayInput.dispatchEvent(new Event('input', { bubbles: true }));
     birthdayInput.dispatchEvent(new Event('change', { bubbles: true }));
-    utils.log(`步骤 5：生日已填写：${birthday}`);
+    utils.log(`步骤 5：生日已填写：${profile.birthday}`);
   } else {
     throw new Error(`步骤 5：未找到可填写的年龄或生日字段。URL: ${location.href}`);
   }
